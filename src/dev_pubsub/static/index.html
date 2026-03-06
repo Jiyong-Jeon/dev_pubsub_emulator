@@ -41,7 +41,14 @@
   .msg-card .msg-topic { color: #58a6ff; font-weight: 500; }
   .msg-card .msg-time { color: #8b949e; font-size: 11px; }
   .msg-card .msg-id { color: #8b949e; font-size: 11px; }
-  .msg-card .msg-data { color: #e1e4e8; margin-top: 4px; padding: 6px 8px; background: #0d1117; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; word-break: break-all; white-space: pre-wrap; max-height: 100px; overflow-y: auto; }
+  .msg-card .msg-data { color: #e1e4e8; margin-top: 4px; padding: 6px 8px; background: #0d1117; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; word-break: break-all; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+  .badge.acked { background: #1a4d2e; color: #3fb950; }
+  .badge.unacked { background: #3d2e00; color: #d29922; }
+
+  .filter-group { display: flex; gap: 4px; }
+  .filter-btn { background: #21262d; color: #8b949e; border: 1px solid #30363d; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500; }
+  .filter-btn:hover { border-color: #58a6ff; color: #e1e4e8; }
+  .filter-btn.active { background: #1f3a5f; color: #58a6ff; border-color: #58a6ff; }
   .msg-card .msg-attrs { margin-top: 4px; }
   .msg-card .msg-attrs span { display: inline-block; padding: 1px 6px; background: #1f3a5f; color: #79c0ff; border-radius: 3px; font-size: 10px; margin-right: 4px; margin-top: 2px; }
 
@@ -83,7 +90,14 @@
       <div class="panel-content" id="subsPanel"></div>
     </div>
     <div class="panel">
-      <div class="panel-header">Messages (Real-time)</div>
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Messages (Real-time)</span>
+        <div class="filter-group">
+          <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+          <button class="filter-btn" data-filter="acked" onclick="setFilter('acked')">ACK</button>
+          <button class="filter-btn" data-filter="unacked" onclick="setFilter('unacked')">UNACK</button>
+        </div>
+      </div>
       <div class="panel-content" id="msgsPanel"></div>
     </div>
   </div>
@@ -103,6 +117,13 @@
 <script>
 const MAX_MSGS = 200;
 let messages = [];
+let currentFilter = 'all';
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  renderMessages();
+}
 
 function shortName(path) { return path.split('/').pop(); }
 
@@ -148,6 +169,13 @@ function renderStats(stats) {
 }
 
 function addMessage(msg) {
+  if (msg.type === 'ack') {
+    // Update existing message ack status
+    const existing = messages.find(m => m.message_id === msg.message_id);
+    if (existing) existing.acked = true;
+    renderMessages();
+    return;
+  }
   messages.unshift(msg);
   if (messages.length > MAX_MSGS) messages = messages.slice(0, MAX_MSGS);
   renderMessages();
@@ -155,16 +183,23 @@ function addMessage(msg) {
 
 function renderMessages() {
   const el = document.getElementById('msgsPanel');
-  el.innerHTML = messages.map(m => {
+  const filtered = messages.filter(m => currentFilter === 'all' || (currentFilter === 'acked' ? m.acked : !m.acked));
+  el.innerHTML = filtered.map(m => {
     const attrs = Object.entries(m.attributes || {}).map(([k,v]) => `<span>${k}=${v}</span>`).join('');
+    const ackBadge = m.acked
+      ? '<span class="badge acked">ACK</span>'
+      : '<span class="badge unacked">UNACK</span>';
+    const dataStr = m.data || '';
+    let formattedData = dataStr;
+    try { formattedData = JSON.stringify(JSON.parse(dataStr), null, 2); } catch(e) {}
     return `
       <div class="msg-card">
         <div class="msg-header">
-          <span class="msg-topic">${shortName(m.topic)}</span>
+          <span class="msg-topic">${shortName(m.topic)} ${ackBadge}</span>
           <span class="msg-time">${timeStr(m.timestamp)}</span>
         </div>
         <div class="msg-id">ID: ${m.message_id} | Size: ${m.data_size}B</div>
-        ${m.data_preview ? `<div class="msg-data">${escapeHtml(m.data_preview)}</div>` : ''}
+        ${dataStr ? `<div class="msg-data">${escapeHtml(formattedData)}</div>` : ''}
         ${attrs ? `<div class="msg-attrs">${attrs}</div>` : ''}
       </div>
     `;

@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from itertools import cycle
 from typing import Any
 
 from dev_pubsub.config import Config
@@ -37,6 +38,7 @@ class SubscriptionState:
     pending: list[StoredMessage] = field(default_factory=list)
     outstanding: dict[str, DeliveredMessage] = field(default_factory=dict)  # ack_id -> msg
     streams: list[asyncio.Queue] = field(default_factory=list)
+    _stream_index: int = 0  # round-robin index
 
 
 @dataclass
@@ -118,7 +120,7 @@ class MessageBroker:
                     if sub is None:
                         continue
                     if sub.streams:
-                        # Deliver directly to active streams
+                        # Deliver to ONE stream (round-robin)
                         ack_id = str(uuid.uuid4())
                         delivered = DeliveredMessage(
                             ack_id=ack_id,
@@ -128,11 +130,7 @@ class MessageBroker:
                         )
                         sub.outstanding[ack_id] = delivered
                         self.stats["delivered"] += 1
-                        for q in sub.streams:
-                            try:
-                                q.put_nowait(delivered)
-                            except asyncio.QueueFull:
-                                pass
+                        self._send_to_one_stream(sub, delivered)
                     else:
                         sub.pending.append(stored)
 
@@ -167,9 +165,22 @@ class MessageBroker:
         if sub is None:
             return
         for ack_id in ack_ids:
-            if ack_id in sub.outstanding:
-                del sub.outstanding[ack_id]
-                self.stats["acked"] += 1
+            delivered = sub.outstanding.pop(ack_id, None)
+            if delivered is None:
+                continue
+            self.stats["acked"] += 1
+            # Update history record
+            msg_id = delivered.message.message_id
+            for record in reversed(self.message_history):
+                if record["message_id"] == msg_id:
+                    record["acked"] = True
+                    break
+            if self._ws_broadcast:
+                asyncio.ensure_future(self._ws_broadcast({
+                    "type": "ack",
+                    "message_id": msg_id,
+                    "subscription": sub_path,
+                }))
 
     def modify_ack_deadline(
         self, sub_path: str, ack_ids: list[str], deadline_seconds: int
@@ -221,6 +232,18 @@ class MessageBroker:
         if q in sub.streams:
             sub.streams.remove(q)
 
+    def _send_to_one_stream(self, sub: SubscriptionState, delivered: DeliveredMessage) -> None:
+        """Send a message to exactly one stream via round-robin."""
+        for _ in range(len(sub.streams)):
+            idx = sub._stream_index % len(sub.streams)
+            sub._stream_index += 1
+            try:
+                sub.streams[idx].put_nowait(delivered)
+                return
+            except asyncio.QueueFull:
+                continue
+        # All streams full — message stays in outstanding, will be re-delivered on deadline
+
     def _redeliver(self, sub: SubscriptionState, msg: StoredMessage) -> None:
         if sub.streams:
             ack_id = str(uuid.uuid4())
@@ -232,11 +255,7 @@ class MessageBroker:
             )
             sub.outstanding[ack_id] = delivered
             self.stats["delivered"] += 1
-            for q in sub.streams:
-                try:
-                    q.put_nowait(delivered)
-                except asyncio.QueueFull:
-                    pass
+            self._send_to_one_stream(sub, delivered)
         else:
             sub.pending.append(msg)
 
@@ -264,10 +283,11 @@ class MessageBroker:
             "type": "message",
             "topic": topic_path,
             "message_id": msg.message_id,
-            "data_preview": msg.data[:200].decode("utf-8", errors="replace") if msg.data else "",
+            "data": msg.data.decode("utf-8", errors="replace") if msg.data else "",
             "data_size": len(msg.data),
             "attributes": msg.attributes,
             "timestamp": msg.publish_time_seconds,
+            "acked": False,
         }
         self.message_history.append(record)
         if len(self.message_history) > self._max_history:
