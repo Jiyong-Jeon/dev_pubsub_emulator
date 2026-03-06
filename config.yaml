@@ -1,0 +1,24 @@
+# Dev PubSub Emulator Configuration
+project_id: postmath-dev
+grpc_port: 8085
+web_port: 8086
+
+# Topic-Subscription mapping
+# Topics and subscriptions are created automatically on server startup.
+# Match these with Go service environment variables.
+topics:
+  - name: ai-service-request-emulator
+    subscriptions:
+      - ai-service-request-sub-emulator          # REQUEST_SUBSCRIPTION_ID
+    # No subscriptions: publish-only topic (AI service subscribes)
+  - name: ai-service-response-emulator
+    subscriptions:
+      - ai-service-response-ags-sub-emulator          # RESPONSE_SUBSCRIPTION_ID
+      - ai-service-response-dps-sub-emulator          # RESPONSE_SUBSCRIPTION_ID
+      - ai-service-response-cms-sub-emulator          # RESPONSE_SUBSCRIPTION_ID
+  - name: bms2dps-emulator
+    subscriptions:
+      - bms2dps-sub-emulator              # BMS2DPS_SUBSCRIPTION_ID
+  - name: dps2cms-migration-emulator
+    subscriptions:
+      - dps2cms-migration-sub-emulator          # DPS2CMS_MIGRATION_SUBSCRIPTION_ID
