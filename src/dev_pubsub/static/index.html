@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dev PubSub Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e1e4e8; }
+  .header { background: #161b22; padding: 16px 24px; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header h1 span { color: #58a6ff; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8b949e; }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+  .status .dot.disconnected { background: #f85149; }
+
+  .stats-bar { display: flex; gap: 16px; padding: 16px 24px; background: #161b22; border-bottom: 1px solid #30363d; }
+  .stat { padding: 8px 16px; background: #21262d; border-radius: 6px; min-width: 120px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px; }
+  .stat .value { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .stat .value.published { color: #58a6ff; }
+  .stat .value.delivered { color: #d2a8ff; }
+  .stat .value.acked { color: #3fb950; }
+  .stat .value.pending { color: #d29922; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 1px; background: #30363d; margin-top: 1px; flex: 1; }
+  .panel { background: #0d1117; display: flex; flex-direction: column; }
+  .panel-header { padding: 12px 16px; background: #161b22; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; border-bottom: 1px solid #30363d; }
+  .panel-content { padding: 8px; overflow-y: auto; flex: 1; max-height: calc(100vh - 220px); }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
+  .card .name { font-size: 13px; font-weight: 600; color: #58a6ff; word-break: break-all; }
+  .card .meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .card .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; margin-top: 4px; margin-right: 4px; }
+  .badge.sub { background: #1f3a5f; color: #58a6ff; }
+  .badge.pending { background: #3d2e00; color: #d29922; }
+  .badge.stream { background: #1a4d2e; color: #3fb950; }
+
+  .msg-card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; font-size: 12px; animation: fadeIn 0.3s ease; }
+  .msg-card .msg-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .msg-card .msg-topic { color: #58a6ff; font-weight: 500; }
+  .msg-card .msg-time { color: #8b949e; font-size: 11px; }
+  .msg-card .msg-id { color: #8b949e; font-size: 11px; }
+  .msg-card .msg-data { color: #e1e4e8; margin-top: 4px; padding: 6px 8px; background: #0d1117; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; word-break: break-all; white-space: pre-wrap; max-height: 100px; overflow-y: auto; }
+  .msg-card .msg-attrs { margin-top: 4px; }
+  .msg-card .msg-attrs span { display: inline-block; padding: 1px 6px; background: #1f3a5f; color: #79c0ff; border-radius: 3px; font-size: 10px; margin-right: 4px; margin-top: 2px; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .publish-form { padding: 12px 16px; background: #161b22; border-top: 1px solid #30363d; }
+  .publish-form .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .publish-form input, .publish-form textarea, .publish-form select { background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: inherit; }
+  .publish-form select { flex: 1; }
+  .publish-form textarea { flex: 1; resize: none; height: 40px; font-family: 'SF Mono', monospace; }
+  .publish-form input { flex: 1; }
+  .publish-form button { background: #238636; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; }
+  .publish-form button:hover { background: #2ea043; }
+
+  .main-layout { display: flex; flex-direction: column; height: 100vh; }
+</style>
+</head>
+<body>
+<div class="main-layout">
+  <div class="header">
+    <h1>Dev <span>PubSub</span></h1>
+    <div class="status"><div class="dot" id="wsDot"></div><span id="wsStatus">Connecting...</span></div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat"><div class="label">Published</div><div class="value published" id="statPublished">0</div></div>
+    <div class="stat"><div class="label">Delivered</div><div class="value delivered" id="statDelivered">0</div></div>
+    <div class="stat"><div class="label">Acked</div><div class="value acked" id="statAcked">0</div></div>
+    <div class="stat"><div class="label">Pending</div><div class="value pending" id="statPending">0</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-header">Topics</div>
+      <div class="panel-content" id="topicsPanel"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Subscriptions</div>
+      <div class="panel-content" id="subsPanel"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Messages (Real-time)</div>
+      <div class="panel-content" id="msgsPanel"></div>
+    </div>
+  </div>
+
+  <div class="publish-form">
+    <div class="row">
+      <select id="pubTopic"></select>
+      <input id="pubAttrs" placeholder='Attributes JSON: {"key":"value"}' />
+      <button onclick="publishMsg()">Publish</button>
+    </div>
+    <div class="row">
+      <textarea id="pubData" placeholder="Message data..."></textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+const MAX_MSGS = 200;
+let messages = [];
+
+function shortName(path) { return path.split('/').pop(); }
+
+function timeStr(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString();
+}
+
+function renderTopics(topics) {
+  const el = document.getElementById('topicsPanel');
+  el.innerHTML = topics.map(t => `
+    <div class="card">
+      <div class="name">${shortName(t.name)}</div>
+      <div class="meta">${t.name}</div>
+      ${t.subscriptions.map(s => `<span class="badge sub">${shortName(s)}</span>`).join('')}
+    </div>
+  `).join('');
+
+  const sel = document.getElementById('pubTopic');
+  const cur = sel.value;
+  sel.innerHTML = topics.map(t => `<option value="${shortName(t.name)}">${shortName(t.name)}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+function renderSubs(subs) {
+  const el = document.getElementById('subsPanel');
+  el.innerHTML = subs.map(s => `
+    <div class="card">
+      <div class="name">${shortName(s.name)}</div>
+      <div class="meta">Topic: ${shortName(s.topic)}</div>
+      <span class="badge pending">pending: ${s.pending}</span>
+      <span class="badge sub">outstanding: ${s.outstanding}</span>
+      ${s.streams > 0 ? `<span class="badge stream">streams: ${s.streams}</span>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderStats(stats) {
+  document.getElementById('statPublished').textContent = stats.published;
+  document.getElementById('statDelivered').textContent = stats.delivered;
+  document.getElementById('statAcked').textContent = stats.acked;
+  document.getElementById('statPending').textContent = stats.pending;
+}
+
+function addMessage(msg) {
+  messages.unshift(msg);
+  if (messages.length > MAX_MSGS) messages = messages.slice(0, MAX_MSGS);
+  renderMessages();
+}
+
+function renderMessages() {
+  const el = document.getElementById('msgsPanel');
+  el.innerHTML = messages.map(m => {
+    const attrs = Object.entries(m.attributes || {}).map(([k,v]) => `<span>${k}=${v}</span>`).join('');
+    return `
+      <div class="msg-card">
+        <div class="msg-header">
+          <span class="msg-topic">${shortName(m.topic)}</span>
+          <span class="msg-time">${timeStr(m.timestamp)}</span>
+        </div>
+        <div class="msg-id">ID: ${m.message_id} | Size: ${m.data_size}B</div>
+        ${m.data_preview ? `<div class="msg-data">${escapeHtml(m.data_preview)}</div>` : ''}
+        ${attrs ? `<div class="msg-attrs">${attrs}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function fetchData() {
+  try {
+    const [topics, subs, stats] = await Promise.all([
+      fetch('/api/topics').then(r => r.json()),
+      fetch('/api/subscriptions').then(r => r.json()),
+      fetch('/api/stats').then(r => r.json()),
+    ]);
+    renderTopics(topics);
+    renderSubs(subs);
+    renderStats(stats);
+  } catch(e) { console.error('Fetch error:', e); }
+}
+
+async function publishMsg() {
+  const topic = document.getElementById('pubTopic').value;
+  const data = document.getElementById('pubData').value;
+  let attrs = {};
+  try { const raw = document.getElementById('pubAttrs').value; if (raw) attrs = JSON.parse(raw); } catch(e) { alert('Invalid JSON attributes'); return; }
+  try {
+    await fetch(`/api/publish/${topic}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({data, attributes: attrs}),
+    });
+    document.getElementById('pubData').value = '';
+  } catch(e) { console.error('Publish error:', e); }
+}
+
+// WebSocket
+let ws;
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => {
+    document.getElementById('wsDot').className = 'dot';
+    document.getElementById('wsStatus').textContent = 'Connected';
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    addMessage(msg);
+    fetchData();
+  };
+  ws.onclose = () => {
+    document.getElementById('wsDot').className = 'dot disconnected';
+    document.getElementById('wsStatus').textContent = 'Disconnected';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+// Init
+fetchData();
+setInterval(fetchData, 5000);
+connectWS();
+
+// Load message history
+fetch('/api/messages').then(r => r.json()).then(msgs => {
+  messages = msgs.reverse();
+  renderMessages();
+});
+</script>
+</body>
+</html>
