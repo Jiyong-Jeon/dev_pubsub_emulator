@@ -297,6 +297,14 @@ function connectWS() {
   });
 })();
 
+// Cmd+Enter / Ctrl+Enter to publish
+document.getElementById('publishForm').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    publishMsg();
+  }
+});
+
 // Init
 fetchData();
 setInterval(fetchData, 5000);
