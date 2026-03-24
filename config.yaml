@@ -22,3 +22,6 @@ topics:
   - name: dps2cms-migration-emulator
     subscriptions:
       - dps2cms-migration-sub-emulator          # DPS2CMS_MIGRATION_SUBSCRIPTION_ID
+  - name: purchase-product
+    subscriptions:
+      - purchase-product-sub                     # PUBSUB_PURCHASE_PRODUCT_SUB
