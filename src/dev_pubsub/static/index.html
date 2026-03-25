@@ -23,10 +23,10 @@
   .stat .value.acked { color: #3fb950; }
   .stat .value.pending { color: #d29922; }
 
-  .grid { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 1px; background: #30363d; margin-top: 1px; flex: 1; }
-  .panel { background: #0d1117; display: flex; flex-direction: column; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 1px; background: #30363d; margin-top: 1px; flex: 1; overflow: hidden; }
+  .panel { background: #0d1117; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .panel-header { padding: 12px 16px; background: #161b22; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; border-bottom: 1px solid #30363d; }
-  .panel-content { padding: 8px; overflow-y: auto; flex: 1; max-height: calc(100vh - 220px); }
+  .panel-content { padding: 8px; overflow-y: auto; flex: 1; min-height: 0; }
 
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
   .card .name { font-size: 13px; font-weight: 600; color: #58a6ff; word-break: break-all; }
@@ -54,13 +54,17 @@
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-  .publish-form { padding: 12px 16px; background: #161b22; border-top: 1px solid #30363d; }
-  .publish-form .row { display: flex; gap: 8px; margin-bottom: 8px; }
-  .publish-form input, .publish-form textarea, .publish-form select { background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: inherit; }
-  .publish-form select { flex: 1; }
-  .publish-form textarea { flex: 1; resize: none; height: 40px; font-family: 'SF Mono', monospace; }
-  .publish-form input { flex: 1; }
-  .publish-form button { background: #238636; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; }
+  .publish-form { padding: 12px 16px; background: #161b22; border-top: 1px solid #30363d; position: sticky; bottom: 0; z-index: 10; display: flex; flex-direction: column; }
+  .publish-form .resize-handle { height: 6px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; flex-shrink: 0; }
+  .publish-form .resize-handle::before { content: ''; width: 40px; height: 3px; background: #30363d; border-radius: 2px; }
+  .publish-form .resize-handle:hover::before { background: #58a6ff; }
+  .publish-form .publish-label { font-size: 11px; color: #8b949e; margin-bottom: 4px; display: block; }
+  .publish-form .publish-top-row { display: flex; gap: 8px; margin-bottom: 8px; flex: 1; min-height: 0; }
+  .publish-form .publish-col { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .publish-form .publish-btn-wrap { display: flex; align-items: flex-end; flex-shrink: 0; }
+  .publish-form textarea, .publish-form select { background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', monospace; resize: none; flex: 1; }
+  .publish-form .textarea-row { display: flex; gap: 8px; flex: 2; min-height: 0; }
+  .publish-form button { background: #238636; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; height: 32px; }
   .publish-form button:hover { background: #2ea043; }
 
   .main-layout { display: flex; flex-direction: column; height: 100vh; }
@@ -102,13 +106,22 @@
     </div>
   </div>
 
-  <div class="publish-form">
-    <div class="row">
-      <select id="pubTopic"></select>
-      <input id="pubAttrs" placeholder='Attributes JSON: {"key":"value"}' />
-      <button onclick="publishMsg()">Publish</button>
+  <div class="publish-form" id="publishForm" style="height: 240px;">
+    <div class="resize-handle" id="resizeHandle"></div>
+    <div class="publish-top-row">
+      <div class="publish-col">
+        <label class="publish-label">Topic</label>
+        <select id="pubTopic"></select>
+      </div>
+      <div class="publish-col">
+        <label class="publish-label">Attributes</label>
+        <textarea id="pubAttrs" placeholder='{"key":"value"}'></textarea>
+      </div>
+      <div class="publish-btn-wrap">
+        <button onclick="publishMsg()">Publish</button>
+      </div>
     </div>
-    <div class="row">
+    <div class="textarea-row">
       <textarea id="pubData" placeholder="Message data..."></textarea>
     </div>
   </div>
@@ -261,6 +274,36 @@ function connectWS() {
   };
   ws.onerror = () => ws.close();
 }
+
+// Resize handle for publish form
+(function() {
+  const form = document.getElementById('publishForm');
+  const handle = document.getElementById('resizeHandle');
+  let startY, startH;
+  handle.addEventListener('mousedown', (e) => {
+    startY = e.clientY;
+    startH = form.offsetHeight;
+    const onMove = (e) => {
+      const newH = Math.max(120, Math.min(500, startH + (startY - e.clientY)));
+      form.style.height = newH + 'px';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+})();
+
+// Cmd+Enter / Ctrl+Enter to publish
+document.getElementById('publishForm').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    publishMsg();
+  }
+});
 
 // Init
 fetchData();
