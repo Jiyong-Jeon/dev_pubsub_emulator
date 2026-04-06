@@ -9,8 +9,9 @@
 ## 기능
 
 - **gRPC API** — `google.pubsub.v1` Publisher/Subscriber 서비스 구현 (StreamingPull 포함)
+- **구독 필터** — `attributes.KEY = "VALUE"` 형식의 구독 필터 지원 (GCP Pub/Sub 호환)
 - **실시간 대시보드** — 토픽/구독 상태, 메시지 흐름을 WebSocket으로 실시간 모니터링
-- **YAML 설정** — 서버 시작 시 토픽/구독 자동 생성
+- **YAML 설정** — 서버 시작 시 토픽/구독 자동 생성 (필터 포함)
 - **REST API** — HTTP로 상태 조회, 수동 메시지 발행
 - **인메모리** — 가볍게 동작, 재시작 시 초기화
 
@@ -56,26 +57,48 @@ grpc_port: 8085
 web_port: 8086
 
 topics:
-  - name: ai-service-request-emulator
+  - name: ai-service-request
     subscriptions:
-      - ai-service-request-sub-emulator
+      - ai-service-request-sub          # 필터 없음: 모든 메시지 수신
 
-  - name: ai-service-response-emulator
+  - name: ai-service-response
     subscriptions:
-      - ai-service-response-ags-sub-emulator
-      - ai-service-response-dps-sub-emulator
-      - ai-service-response-cms-sub-emulator
+      - name: ai-service-response-ags-sub
+        filter: 'attributes.service_name = "ags"'
+      - name: ai-service-response-dps-sub
+        filter: 'attributes.service_name = "dps"'
+      - name: ai-service-response-cms-sub
+        filter: 'attributes.service_name = "cms"'
 
-  - name: bms2dps-emulator
+  - name: bms2dps
     subscriptions:
-      - bms2dps-sub-emulator
-
-  - name: dps2cms-migration-emulator
-    subscriptions:
-      - dps2cms-migration-sub-emulator
+      - bms2dps-sub
 ```
 
 서버 시작 시 각 토픽/구독이 `projects/{project_id}/topics/{name}`, `projects/{project_id}/subscriptions/{name}` 형식으로 자동 생성됩니다. 런타임에 gRPC `CreateTopic`/`CreateSubscription` 호출로 추가 생성도 가능합니다.
+
+### 구독 필터
+
+구독에 `filter`를 설정하면 해당 조건에 맞는 메시지만 전달됩니다. GCP Pub/Sub의 [필터 언어](https://cloud.google.com/pubsub/docs/filtering)와 동일한 형식입니다.
+
+```yaml
+# 문자열 형식 (필터 없음 — 모든 메시지 수신)
+subscriptions:
+  - my-sub
+
+# 객체 형식 (필터 있음 — 조건 일치 메시지만 수신)
+subscriptions:
+  - name: my-filtered-sub
+    filter: 'attributes.service_name = "dps"'
+```
+
+두 형식을 혼합하여 사용할 수 있습니다. 현재 지원하는 필터 표현식:
+
+| 표현식 | 설명 | 예시 |
+|--------|------|------|
+| `attributes.KEY = "VALUE"` | 속성 값이 일치하면 전달 | `attributes.service_name = "dps"` |
+
+프로덕션 Terraform 설정과 동일한 필터를 config.yaml에 적용하면 로컬에서도 attribute 기반 메시지 라우팅이 동작합니다.
 
 ---
 
@@ -121,7 +144,7 @@ else:
 | 영역 | 내용 |
 |------|------|
 | **Topics** | 토픽 목록, 연결된 구독 표시 |
-| **Subscriptions** | 구독별 pending/outstanding 메시지 수, 활성 스트림 수 |
+| **Subscriptions** | 구독별 필터 표현식, pending/outstanding 메시지 수, 활성 스트림 수 |
 | **Messages** | 실시간 메시지 스트림, ACK/UNACK 상태 배지, 전체 데이터 표시 |
 | **Stats** | Published / Delivered / Acked / Pending 카운터 |
 | **Publish** | 토픽 선택 후 수동 메시지 발행 (테스트용) |
@@ -166,7 +189,7 @@ curl -X POST http://localhost:8086/api/publish/ai-service-request-emulator \
 |-----|------|
 | `CreateTopic` | 지원 |
 | `GetTopic` | 지원 (없으면 자동 생성) |
-| `Publish` | 지원 (모든 구독에 fan-out) |
+| `Publish` | 지원 (구독 필터 적용 후 fan-out) |
 | `ListTopics` | 지원 |
 | `ListTopicSubscriptions` | 지원 |
 | `DeleteTopic` | 지원 |
@@ -205,10 +228,17 @@ Go pubsub v2의 `Receive()`가 사용하는 핵심 RPC입니다.
 ## 메시지 흐름
 
 ```
-Publish(topic, message)
+Publish(topic, message with attributes)
         │
         ▼
-  MessageBroker: 해당 topic의 모든 subscription에 fan-out
+  MessageBroker: 각 subscription의 filter 평가
+        │
+        ├─ filter 없음 → 메시지 전달 (fan-out)
+        ├─ filter 일치 → 메시지 전달
+        └─ filter 불일치 → 메시지 스킵
+        │
+        ▼
+  전달 대상 subscription
         │
         ├─ 활성 스트림 있음 → round-robin으로 하나의 스트림에 전달
         └─ 활성 스트림 없음 → pending 큐에 저장 (스트림 연결 시 즉시 전달)
@@ -229,7 +259,8 @@ Publish(topic, message)
 src/dev_pubsub/
 ├── __main__.py              # 엔트리포인트 (gRPC + FastAPI + deadline checker)
 ├── config.py                # YAML 설정 로딩 + CLI 인자
-├── broker.py                # 인메모리 메시지 브로커 (fan-out, ack, deadline)
+├── broker.py                # 인메모리 메시지 브로커 (필터, fan-out, ack, deadline)
+├── filter.py                # 구독 필터 파서 (attributes.KEY = "VALUE")
 ├── grpc_server.py           # gRPC 서버 부트스트랩
 ├── publisher_servicer.py    # Publisher gRPC 서비스
 ├── subscriber_servicer.py   # Subscriber gRPC 서비스 (StreamingPull)

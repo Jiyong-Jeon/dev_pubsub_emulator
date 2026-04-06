@@ -8,9 +8,15 @@ import yaml
 
 
 @dataclass
+class SubscriptionConfig:
+    name: str
+    filter: str | None = None
+
+
+@dataclass
 class TopicConfig:
     name: str
-    subscriptions: list[str] = field(default_factory=list)
+    subscriptions: list[SubscriptionConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -41,9 +47,18 @@ def load_config(path: str | Path | None = None) -> Config:
 
     topics = []
     for t in raw.get("topics", []):
+        subs = []
+        for s in t.get("subscriptions", []):
+            if isinstance(s, str):
+                subs.append(SubscriptionConfig(name=s))
+            elif isinstance(s, dict):
+                subs.append(SubscriptionConfig(
+                    name=s["name"],
+                    filter=s.get("filter"),
+                ))
         topics.append(TopicConfig(
             name=t["name"],
-            subscriptions=t.get("subscriptions", []),
+            subscriptions=subs,
         ))
 
     return Config(
