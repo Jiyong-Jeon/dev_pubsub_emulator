@@ -167,6 +167,7 @@ function renderSubs(subs) {
     <div class="card">
       <div class="name">${shortName(s.name)}</div>
       <div class="meta">Topic: ${shortName(s.topic)}</div>
+      ${s.filter ? `<div class="meta" style="color:#d2a8ff">Filter: ${escapeHtml(s.filter)}</div>` : ''}
       <span class="badge pending">pending: ${s.pending}</span>
       <span class="badge sub">outstanding: ${s.outstanding}</span>
       ${s.streams > 0 ? `<span class="badge stream">streams: ${s.streams}</span>` : ''}

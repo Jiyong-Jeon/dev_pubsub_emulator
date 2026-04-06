@@ -5,10 +5,12 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from itertools import cycle
 from typing import Any
 
+from typing import Callable
+
 from dev_pubsub.config import Config
+from dev_pubsub.filter import parse_filter
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,10 @@ class SubscriptionState:
     name: str  # full resource path
     topic: str  # full resource path
     ack_deadline_seconds: int = 10
+    filter_expr: str | None = None
+    filter_fn: Callable[[dict[str, str]], bool] = field(
+        default_factory=lambda: lambda attrs: True
+    )
     pending: list[StoredMessage] = field(default_factory=list)
     outstanding: dict[str, DeliveredMessage] = field(default_factory=dict)  # ack_id -> msg
     streams: list[asyncio.Queue] = field(default_factory=list)
@@ -71,9 +77,9 @@ class MessageBroker:
         for tc in self.config.topics:
             topic_path = self.config.topic_path(tc.name)
             self._ensure_topic(topic_path)
-            for sub_name in tc.subscriptions:
-                sub_path = self.config.subscription_path(sub_name)
-                self._ensure_subscription(sub_path, topic_path)
+            for sub_cfg in tc.subscriptions:
+                sub_path = self.config.subscription_path(sub_cfg.name)
+                self._ensure_subscription(sub_path, topic_path, filter_expr=sub_cfg.filter)
 
     def _ensure_topic(self, topic_path: str) -> TopicState:
         if topic_path not in self.topics:
@@ -82,7 +88,11 @@ class MessageBroker:
         return self.topics[topic_path]
 
     def _ensure_subscription(
-        self, sub_path: str, topic_path: str, ack_deadline_seconds: int = 10
+        self,
+        sub_path: str,
+        topic_path: str,
+        ack_deadline_seconds: int = 10,
+        filter_expr: str | None = None,
     ) -> SubscriptionState:
         if sub_path not in self.subscriptions:
             topic = self._ensure_topic(topic_path)
@@ -90,6 +100,8 @@ class MessageBroker:
                 name=sub_path,
                 topic=topic_path,
                 ack_deadline_seconds=ack_deadline_seconds,
+                filter_expr=filter_expr,
+                filter_fn=parse_filter(filter_expr),
             )
             self.subscriptions[sub_path] = sub
             if sub_path not in topic.subscriptions:
@@ -114,10 +126,12 @@ class MessageBroker:
                 message_ids.append(msg_id)
                 self.stats["published"] += 1
 
-                # Fan-out to all subscriptions
+                # Fan-out to matching subscriptions (apply filter)
                 for sub_path in topic.subscriptions:
                     sub = self.subscriptions.get(sub_path)
                     if sub is None:
+                        continue
+                    if not sub.filter_fn(stored.attributes):
                         continue
                     if sub.streams:
                         # Deliver to ONE stream (round-robin)

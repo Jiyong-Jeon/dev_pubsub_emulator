@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -56,6 +55,7 @@ def create_app(broker: MessageBroker) -> FastAPI:
             subs.append({
                 "name": s.name,
                 "topic": s.topic,
+                "filter": s.filter_expr,
                 "pending": len(s.pending),
                 "outstanding": len(s.outstanding),
                 "streams": len(s.streams),
