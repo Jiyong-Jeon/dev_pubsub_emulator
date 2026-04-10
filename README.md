@@ -13,6 +13,7 @@
 - **실시간 대시보드** — 토픽/구독 상태, 메시지 흐름을 WebSocket으로 실시간 모니터링
 - **YAML 설정** — 서버 시작 시 토픽/구독 자동 생성 (필터 포함)
 - **REST API** — HTTP로 상태 조회, 수동 메시지 발행
+- **CLI 클라이언트** — 터미널에서 메시지 발행 및 상태 조회 (E2E 테스트 자동화용)
 - **인메모리** — 가볍게 동작, 재시작 시 초기화
 
 ---
@@ -133,6 +134,66 @@ else:
     )
     publisher = pubsub_v1.PublisherClient(credentials=credentials)
     subscriber = pubsub_v1.SubscriberClient(credentials=credentials)
+```
+
+---
+
+## CLI 클라이언트
+
+에뮬레이터가 실행 중인 상태에서, 터미널로 메시지를 발행하거나 상태를 조회할 수 있습니다. 백엔드 서버의 E2E 테스트에서 subscription 핸들러를 검증할 때 유용합니다.
+
+```bash
+uv run dev-pubsub-cli <command> [options]
+```
+
+### 명령어
+
+| 명령 | 설명 | 예시 |
+|------|------|------|
+| `publish` (`pub`) | 토픽에 메시지 발행 | `dev-pubsub-cli publish ai-service-request -d '{"task":"ocr"}'` |
+| `topics` | 토픽 목록 조회 | `dev-pubsub-cli topics` |
+| `subs` | 구독 목록 조회 | `dev-pubsub-cli subs` |
+| `stats` | 통계 조회 | `dev-pubsub-cli stats` |
+| `messages` (`msgs`) | 최근 메시지 히스토리 | `dev-pubsub-cli messages -n 10` |
+
+### 메시지 발행
+
+```bash
+# 기본 발행
+uv run dev-pubsub-cli publish ai-service-request -d '{"task_id":"test-1","task_type":"cell_ocr"}'
+
+# attributes 포함 발행 (구독 필터에 사용)
+uv run dev-pubsub-cli publish ai-service-response \
+  -d '{"result":"done"}' \
+  -a '{"service_name":"dps"}'
+```
+
+### 옵션
+
+| 옵션 | 기본값 | 설명 |
+|------|--------|------|
+| `--host` | `localhost` | 에뮬레이터 호스트 |
+| `--port` | `8086` | 에뮬레이터 웹 포트 |
+| `-d`, `--data` | `""` | 메시지 데이터 |
+| `-a`, `--attrs` | — | attributes JSON (`publish` 전용) |
+| `-n`, `--limit` | `20` | 표시할 메시지 수 (`messages` 전용) |
+
+### E2E 테스트 활용 예시
+
+```bash
+# 1. 에뮬레이터 실행
+uv run dev-pubsub &
+
+# 2. 백엔드 서버 실행 (PUBSUB_EMULATOR_HOST 설정)
+PUBSUB_EMULATOR_HOST=localhost:8085 go run ./cmd/server &
+
+# 3. CLI로 메시지 발행 → 백엔드가 수신하여 처리
+uv run dev-pubsub-cli publish ai-service-request \
+  -d '{"task_id":"e2e-test-1","task_type":"cell_ocr"}'
+
+# 4. 결과 확인
+uv run dev-pubsub-cli messages -n 5
+uv run dev-pubsub-cli stats
 ```
 
 ---
@@ -258,6 +319,7 @@ Publish(topic, message with attributes)
 ```
 src/dev_pubsub/
 ├── __main__.py              # 엔트리포인트 (gRPC + FastAPI + deadline checker)
+├── cli.py                   # CLI 클라이언트 (dev-pubsub-cli)
 ├── config.py                # YAML 설정 로딩 + CLI 인자
 ├── broker.py                # 인메모리 메시지 브로커 (필터, fan-out, ack, deadline)
 ├── filter.py                # 구독 필터 파서 (attributes.KEY = "VALUE")
