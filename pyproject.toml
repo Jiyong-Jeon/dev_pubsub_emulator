@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 dev-pubsub = "dev_pubsub.__main__:main"
+dev-pubsub-cli = "dev_pubsub.cli:main"
 
 [build-system]
 requires = ["hatchling"]
