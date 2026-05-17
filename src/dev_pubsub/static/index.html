@@ -44,6 +44,8 @@
   .msg-card .msg-data { color: #e1e4e8; margin-top: 4px; padding: 6px 8px; background: #0d1117; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; word-break: break-all; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
   .badge.acked { background: #1a4d2e; color: #3fb950; }
   .badge.unacked { background: #3d2e00; color: #d29922; }
+  .ack-btn { background: #1f3a5f; color: #58a6ff; border: 1px solid #30363d; padding: 1px 8px; border-radius: 10px; cursor: pointer; font-size: 11px; font-weight: 500; margin-left: 4px; }
+  .ack-btn:hover { background: #2d4f7c; color: #e1e4e8; border-color: #58a6ff; }
 
   .filter-group { display: flex; gap: 4px; }
   .filter-btn { background: #21262d; color: #8b949e; border: 1px solid #30363d; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500; }
@@ -202,7 +204,7 @@ function renderMessages() {
     const attrs = Object.entries(m.attributes || {}).map(([k,v]) => `<span>${k}=${v}</span>`).join('');
     const ackBadge = m.acked
       ? '<span class="badge acked">ACK</span>'
-      : '<span class="badge unacked">UNACK</span>';
+      : `<span class="badge unacked">UNACK</span><button class="ack-btn" onclick="forceAck('${m.message_id}')">ACK</button>`;
     const dataStr = m.data || '';
     let formattedData = dataStr;
     try { formattedData = JSON.stringify(JSON.parse(dataStr), null, 2); } catch(e) {}
@@ -237,6 +239,16 @@ async function fetchData() {
     renderSubs(subs);
     renderStats(stats);
   } catch(e) { console.error('Fetch error:', e); }
+}
+
+async function forceAck(messageId) {
+  try {
+    await fetch(`/api/messages/${messageId}/ack`, {method: 'POST'});
+    const existing = messages.find(m => m.message_id === messageId);
+    if (existing) existing.acked = true;
+    renderMessages();
+    fetchData();
+  } catch(e) { console.error('Force ack error:', e); }
 }
 
 async function publishMsg() {

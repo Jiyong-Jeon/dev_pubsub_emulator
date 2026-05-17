@@ -71,6 +71,11 @@ def create_app(broker: MessageBroker) -> FastAPI:
     async def get_messages():
         return JSONResponse(broker.message_history[-100:])
 
+    @app.post("/api/messages/{message_id}/ack")
+    async def force_ack(message_id: str):
+        cleared = broker.force_ack_message(message_id)
+        return JSONResponse({"message_id": message_id, "cleared": cleared})
+
     @app.post("/api/publish/{topic_name}")
     async def publish_message(topic_name: str, body: dict):
         topic_path = None

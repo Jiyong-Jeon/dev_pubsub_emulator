@@ -196,6 +196,49 @@ class MessageBroker:
                     "subscription": sub_path,
                 }))
 
+    def force_ack_message(self, message_id: str) -> int:
+        """Force-ack a message across all subscriptions by message_id.
+
+        Removes matching entries from every subscription's outstanding and
+        pending queues, updates history, and broadcasts a single ack event.
+        Returns the number of cleared deliveries.
+        """
+        cleared = 0
+        for sub in self.subscriptions.values():
+            matching_ack_ids = [
+                aid
+                for aid, dm in sub.outstanding.items()
+                if dm.message.message_id == message_id
+            ]
+            for aid in matching_ack_ids:
+                sub.outstanding.pop(aid, None)
+                self.stats["acked"] += 1
+                cleared += 1
+
+            before = len(sub.pending)
+            sub.pending = [m for m in sub.pending if m.message_id != message_id]
+            removed = before - len(sub.pending)
+            self.stats["acked"] += removed
+            cleared += removed
+
+        for record in reversed(self.message_history):
+            if record["message_id"] == message_id:
+                record["acked"] = True
+                break
+
+        if self._ws_broadcast:
+            asyncio.ensure_future(
+                self._ws_broadcast(
+                    {
+                        "type": "ack",
+                        "message_id": message_id,
+                        "subscription": "*",
+                    }
+                )
+            )
+
+        return cleared
+
     def modify_ack_deadline(
         self, sub_path: str, ack_ids: list[str], deadline_seconds: int
     ) -> None:
